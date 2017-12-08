@@ -55,7 +55,7 @@ void setup() {
   Serial.println("Starting MQTT client on arduino ...");
   
   // Set MQTT server
-  client.setServer("io.adafruit.com", 1883);
+  client.setServer("brain.engineering", 1883);
   client.setCallback(call_Back);
 
   /*!SET PINS HERE!*/
@@ -116,6 +116,13 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   Serial.print("] ");
   Serial.println(data);
 
+  // Adjust Brightness of lights
+  if (t.indexOf("light-pwm") > 0){
+    // Convert data to PWM value and set
+    uint8_t id = 5;
+    int pwmVal = atoi(data);
+    update_PWM(&pinStateID[id], &pinPwmID[id], pwmVal, pinID[id]);
+  }
 
   // Update threshold values
   if (t.indexOf("light-threshold") > 0){
@@ -123,8 +130,13 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
     pinUpperThresholdID[id] = atoi(data);
   }
 
+  // Apply Light Override originating from client UI
+  if (t.indexOf("light-override") > 0){
+    uint8_t id = 5;
+    override_Pin(id);
+  }
 
-  // use light data
+  // Use light data
   if (t.indexOf("light-level") > 0){
     uint8_t id = 5;
     int light = atoi(data);
@@ -179,17 +191,20 @@ void reconnect() {
     Serial.println("Attempting MQTT Connection...");
 
     // Connect Publisher to broker
-    if (client.connect("CB_MP_Publisher", "cbraines", "7c3e3b474fce4a7bbfdd92230bc273b9")) {
+    //if (client.connect("CB_MP_Publisher", "cbraines", "7c3e3b474fce4a7bbfdd92230bc273b9")) {
+    if (client.connect("CB_MP_Publisher", "cbraines", "Tp:5tF'<5dc_k@;<")) {
       Serial.println("... connected");
 
-      client.publish("cbraines/f/message-log", "Subscriber connected");
+      client.publish("/f/message-log", "Subscriber connected");
 
       // Subscribe to relevant feeds
-      client.subscribe("cbraines/f/light-level");
-      client.subscribe("cbraines/f/light-threshold");
-      client.subscribe("cbraines/f/pir-level");
-      client.subscribe("cbraines/f/pir-ack");
-      client.subscribe("cbraines/f/pir-pwm");
+      client.subscribe("/f/light-level");
+      client.subscribe("/f/light-threshold");
+      client.subscribe("/f/light-override");
+      client.subscribe("/f/light-pwm");
+      client.subscribe("/f/pir-level");
+      client.subscribe("/f/pir-ack");
+      client.subscribe("/f/pir-pwm");
 
       // Perform setup tasks
       
