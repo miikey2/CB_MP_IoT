@@ -101,6 +101,7 @@ void reconnect() {
     Serial.println("Attempting MQTT Connection...");
 
     // Connect Publisher to broker
+    /*!CHANGE BROKER AND FEEDS TO brain.engineering and /f/... !*/
     if (client.connect("CB_MP_Publisher", "cbraines", "7c3e3b474fce4a7bbfdd92230bc273b9")) {
       Serial.println("... connected");
 
@@ -202,7 +203,7 @@ void readPIR(uint8_t *state){
 }
 
 // function to handle all data sending
-void sendData(char* feed, int payload){
+void sendData(char *feed, int payload){
 
   // Convert payload to character array
   String payloadStr = String(payload, DEC);

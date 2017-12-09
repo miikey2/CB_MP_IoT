@@ -17,6 +17,13 @@ PubSubClient client(ethernetClient);
 
 
 /*
+ * 
+ * Things to ADD:
+ * - Fix synchronisation between override buttons so they update the client buttons
+ */
+
+
+/*
  * Pins are as follows
  * 
  * Heater     - I/O(!ADD PIN HERE!)   - ID = 0
@@ -39,7 +46,8 @@ const uint8_t pinID[7] = {0,0,0,0,0,3,6};
 uint8_t pinStateID[7] = {0};
 uint8_t pinPwmID[7] = {0,0,0,0,0,255,5};
 uint8_t pinOverrideID[7] = {0};
-uint8_t pinUpperThresholdID[7] = {0,0,0,0,0,30,0};
+uint8_t pinUpperThresholdID[7] = {20,0,0,0,25,30,0};
+
 
 uint8_t pirAck = 0;
 unsigned long ts = millis();
@@ -116,6 +124,43 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   Serial.print("] ");
   Serial.println(data);
 
+  /*
+   * Temperature processing START
+   */
+  
+    if (t.indexOf("temp-heater-threshold") > 0){
+      uint8_t id = 1;
+      uint8_t otherId = 4;
+      pinUpperThresholdID[id] = atoi(data);
+      
+      if(pinUpperThresholdID[id] >= pinUpperThresholdID[otherId]){
+        pinUpperThresholdID[otherId] = pinUpperThresholdID[id] + 2;
+        char feed[] = "/f/temp-intake-threshold";
+        sendData(feed, pinUpperThresholdID[otherId]);
+      }
+    }
+    
+    if (t.indexOf("temp-intake-threshold") > 0){
+      uint8_t id = 4;
+      uint8_t otherId = 1;
+      pinUpperThresholdID[id] = atoi(data);
+      
+      if(pinUpperThresholdID[id] <= pinUpperThresholdID[otherId]){
+        pinUpperThresholdID[otherId] = pinUpperThresholdID[id] - 2;
+        char feed[] = "/f/temp-heater-threshold";
+        sendData(feed, pinUpperThresholdID[otherId]);
+      }
+    }
+
+  /*
+   * Temperature processing END
+   */
+
+
+  /*
+   * Light processing START
+   */
+
   // Adjust Brightness of lights
   if (t.indexOf("light-pwm") > 0){
     // Convert data to PWM value and set
@@ -140,6 +185,7 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   if (t.indexOf("light-level") > 0){
     uint8_t id = 5;
     int light = atoi(data);
+    
     // Only update if override not on
     if(pinOverrideID[id] != 1){
       if(light < pinUpperThresholdID[id]){
@@ -151,17 +197,33 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
         control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
     }
   }
+  
+  /*
+   * Light processing END
+   */
 
+  /*
+   * PIR/Buzzer processing START
+   */
 
+  // Override PIR sensor/Buzzer output
+  if (t.indexOf("pir-override") > 0){
+    uint8_t id = 6;
+    override_Pin(id);
+  }
+   
   // Turn on buzzer until PIR ACK
   if (t.indexOf("pir-level") > 0){
     if(strcmp(data, "1") == 0 && pirAck == 0){
-      // Set off Alarm
+      
       uint8_t id = 6;
-      pirAck = 1;
-      pinStateID[id] = 1;
-      control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+      if (pinOverrideID[id] != 1){
+        pirAck = 1;
+        pinStateID[id] = 1;
+        control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+      }
     }
+
     if(strcmp(data, "0") == 0){
       // latch won't function until ACK occurs
       pirAck = 0;
@@ -184,14 +246,19 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
     int pwmVal = atoi(data);
     update_PWM(&pinStateID[id], &pinPwmID[id], pwmVal, pinID[id]);
   }
+
+  /*
+   * PIR/Buzzer processing END
+   */
+  
 }
+
 
 void reconnect() {
   while (!client.connected()) {
     Serial.println("Attempting MQTT Connection...");
 
     // Connect Publisher to broker
-    //if (client.connect("CB_MP_Publisher", "cbraines", "7c3e3b474fce4a7bbfdd92230bc273b9")) {
     if (client.connect("CB_MP_Publisher", "cbraines", "Tp:5tF'<5dc_k@;<")) {
       Serial.println("... connected");
 
@@ -203,9 +270,12 @@ void reconnect() {
       client.subscribe("/f/light-override");
       client.subscribe("/f/light-pwm");
       client.subscribe("/f/pir-level");
+      client.subscribe("/f/pir-override");
       client.subscribe("/f/pir-ack");
       client.subscribe("/f/pir-pwm");
-
+      client.subscribe("/f/temp-heater-threshold");
+      client.subscribe("/f/temp-intake-threshold");
+      
       // Perform setup tasks
       
       /*!PRE PUBLISH ANYTHING NEEDED HERE!*/
@@ -324,14 +394,37 @@ void override_Pin(uint8_t id){
     pinOverrideID[id] = 1;
     Serial.print("Override set as ON for ");
     Serial.println(outputIdentifier[id]);
-    pinStateID[id] = 1;
-    control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+
+    // PIR override prevents output, everything else forces output
+    if (id == 6){
+      control_Pin(0, &pinPwmID[id], pinID[id]);
+    }
+    else{
+      pinStateID[id] = 1;
+      control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+    }
   }
   else{
+    // Everything minus buzzer is sampled fast enough that setting to prior state is not required
     pinOverrideID[id] = 0;
     Serial.print("Override set as OFF for ");
     Serial.println(outputIdentifier[id]);
-
+    // Set alarm back off if override pressed while buzzer occuring
+    if (id == 6){
+      control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+    }
   }
 }
 
+// function to handle all data sending
+void sendData(char *feed, int payload){
+
+  // Convert payload to character array
+  String payloadStr = String(payload, DEC);
+  char payloadBuffer[8];
+  payloadStr.toCharArray(payloadBuffer, 9);
+
+  // Publish value
+  client.publish(feed, payloadBuffer);
+  
+}
