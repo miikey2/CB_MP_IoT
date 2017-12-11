@@ -31,7 +31,7 @@ void setup() {
   Serial.println("Starting MQTT client on arduino ...");
   
   // Set MQTT server
-  client.setServer("io.adafruit.com", 1883);
+  client.setServer("brain.engineering", 1883);
   client.setCallback(call_Back);
 
   /*!SET PINS HERE!*/
@@ -102,7 +102,7 @@ void reconnect() {
 
     // Connect Publisher to broker
     /*!CHANGE BROKER AND FEEDS TO brain.engineering and /f/... !*/
-    if (client.connect("CB_MP_Publisher", "cbraines", "7c3e3b474fce4a7bbfdd92230bc273b9")) {
+    if (client.connect("CB_MP_Publisher", "cbraines", "Tp:5tF'<5dc_k@;<")) {
       Serial.println("... connected");
 
       client.publish("cbraines/f/message-log", "Publisher begun");
