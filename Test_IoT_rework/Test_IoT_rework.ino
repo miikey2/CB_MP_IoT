@@ -1,7 +1,7 @@
 #include <SPI.h>
 #include <Ethernet2.h>
 #include <PubSubClient.h>
-
+#include <Wire.h>
 
 // Needs changing for any different boards code is uploaded to.
 byte mac[] = {0x90, 0xA2, 0xDA, 0x11, 0x3B, 0xC6};
@@ -54,24 +54,13 @@ uint8_t lastButtonState = 0;
 uint8_t currentButtonState = 0;
 long lastDebounceTime = 0;
 const uint8_t debounceDelay = 50;
+uint8_t receivedButton = 0;
 
-/*
- * ADD BUTTON FOR CLIENT TO SYNC THRESHOLDS, PWM.
- */
   
 void setup() {
   // Init Serial for debugging and general client side messages
   Serial.begin(9600);
 
-  /*
-  strcpy(Heater.feed, "temp-heater-");
-  strcpy(Solenoid.feed, "moisture-");
-  strcpy(Steamer.feed, "humidity-steamer-");
-  strcpy(Exhaust.feed, "humidity-exhaust-");
-  strcpy(Intake.feed, "temp-intake-");
-  strcpy(Lighting.feed, "light-");
-  strcpy(Buzzer.feed, "pir-");
-  */
   // Set pointer references up for symlinks
   Heater.symLinkId = &Intake;
   Solenoid.symLinkId = NULL;
@@ -106,6 +95,9 @@ void setup() {
 
   Serial.print(F("MQTT client is at: "));
   Serial.println(Ethernet.localIP());
+
+  Wire.begin(2);
+  Wire.onReceive(receiveEvent);
 }
 
 
@@ -115,13 +107,33 @@ void loop() {
     reconnect();
   }
 
-  /*!NEEDED ON PUBLISHER?!*/ 
-  // Every 1.5s send data
-  if (millis() > ts + 1500){
-    ts = millis();
-  }
-//  int buttonVal = check_Buttons();
   client.loop();
+  if (receivedButton != 0){
+    switch(receivedButton){
+      case 1:
+        override_Pin(&Heater);
+        break;
+      case 2:
+        override_Pin(&Solenoid);
+        break;
+      case 3:
+        override_Pin(&Steamer);
+        break;
+      case 4:
+        override_Pin(&Exhaust);
+        break;
+      case 5:
+        override_Pin(&Intake);
+        break;
+      case 6:
+        override_Pin(&Lighting);
+        break;
+      case 7:
+        override_Pin(&Buzzer);
+        break;
+    }
+    receivedButton = 0;
+  }
 }
 
 
@@ -420,6 +432,7 @@ void update_Pwm(struct OperationPin *Holder, uint8_t pwm){
   }
 }
 
+/*!Need to fix so that Interface on MQTT updates for manual button presses!*/
 void override_Pin(struct OperationPin *Holder){
   
   //If symlink present then update main and disable/turn off sym
@@ -474,4 +487,7 @@ void send_Data(char *feed, int payload){
    
 }
 
+void receiveEvent(int bytes){
+  receivedButton = Wire.read();
+}
 

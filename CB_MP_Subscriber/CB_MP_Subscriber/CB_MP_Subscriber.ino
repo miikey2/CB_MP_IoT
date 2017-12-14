@@ -26,25 +26,28 @@ PubSubClient client(ethernetClient);
 /*
  * Pins are as follows
  * 
- * Heater     - I/O(!ADD PIN HERE!)   - ID = 0
+ * Heater     - I/O(D8)               - ID = 0
  * Solenoid   - I/O(!ADD PIN HERE!)   - ID = 1
  * Steamer    - I/O(!ADD PIN HERE!)   - ID = 2
  * Exhaust    - PWM(!ADD PIN HERE!)   - ID = 3
- * Intake     - PWM(!ADD PIN HERE!)   - ID = 4
+ * Intake     - PWM(D9)               - ID = 4
  * Lighting   - PWM(D3)               - ID = 5
  * Buzzer     - PWM(D6)               - ID = 6
  * 
  * 
  */
+
+
+/*!USE STRUCTURES INSTEAD OF ARRAYS?!*/
  
 // Pin Constants defined here
 const char *outputIdentifier[7];
-const uint8_t pinID[7] = {0,0,0,0,0,3,6};
+const uint8_t pinID[7] = {8,0,0,0,5,3,6};
 
 
 // Programme scope variables here
 uint8_t pinStateID[7] = {0};
-uint8_t pinPwmID[7] = {0,0,0,0,0,255,5};
+uint8_t pinPwmID[7] = {0,0,0,0,100,255,5};
 uint8_t pinOverrideID[7] = {0};
 uint8_t pinUpperThresholdID[7] = {20,0,0,0,25,30,0};
 
@@ -70,6 +73,9 @@ void setup() {
   // Set input and outputs
   pinMode(pinID[6], OUTPUT);
   pinMode(pinID[5], OUTPUT);
+  pinMode(pinID[4], OUTPUT);
+  pinMode(pinID[0], OUTPUT);
+  pinMode(A0, INPUT);
   
   // Set array of string values
   outputIdentifier[0] = "Heater";
@@ -126,31 +132,86 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
 
   /*
    * Temperature processing START
+   * Heater and intake are symboliclly linked so must always be
+   * Heater threshold < Intake Threshold 
    */
-  
-    if (t.indexOf("temp-heater-threshold") > 0){
-      uint8_t id = 1;
-      uint8_t otherId = 4;
-      pinUpperThresholdID[id] = atoi(data);
-      
-      if(pinUpperThresholdID[id] >= pinUpperThresholdID[otherId]){
-        pinUpperThresholdID[otherId] = pinUpperThresholdID[id] + 2;
-        char feed[] = "/f/temp-intake-threshold";
-        sendData(feed, pinUpperThresholdID[otherId]);
-      }
+
+  // Store new heating threshold
+  if (t.indexOf("temp-heater-threshold") > 0){
+    uint8_t id = 0;
+    uint8_t otherId = 4;
+    pinUpperThresholdID[id] = atoi(data);
+
+    // update Intake threshold if Heater changed
+    if(pinUpperThresholdID[id] >= pinUpperThresholdID[otherId]){
+      pinUpperThresholdID[otherId] = pinUpperThresholdID[id] + 2;
+      char feed[] = "/f/temp-intake-threshold";
+      sendData(feed, pinUpperThresholdID[otherId]);
     }
+  }
+
+  // Store new intake fan threshold
+  if (t.indexOf("temp-intake-threshold") > 0){
+    uint8_t id = 4;
+    uint8_t otherId = 0;
+    pinUpperThresholdID[id] = atoi(data);
+
+    // update Heater threshold if Intake changed
+    if(pinUpperThresholdID[id] <= pinUpperThresholdID[otherId]){
+      pinUpperThresholdID[otherId] = pinUpperThresholdID[id] - 2;
+      char feed[] = "/f/temp-heater-threshold";
+      sendData(feed, pinUpperThresholdID[otherId]);
+    }
+  }
+
+
+  // Intake PWM
+  if (t.indexOf("temp-intake-pwm") > 0){
+    uint8_t id = 4;
+    int pwmVal = atoi(data);
+    update_PWM(&pinStateID[id], &pinPwmID[id], pwmVal, pinID[id]);
+  }
+
+  // Intake Override
+  if (t.indexOf("temp-intake-override") > 0){
+    uint8_t id = 4;
+    override_Pin(id);
+  }
+
+  // Heating Override
+  if (t.indexOf("temp-heater-override") > 0){
+    uint8_t id = 0;
+    override_Pin(id);
+  }
+
+  // Temperature Level
+  if (t.indexOf("temp-level") > 0){
+    uint8_t id = 4;
+    uint8_t otherId = 0;
+    int temp = atoi(data);
     
-    if (t.indexOf("temp-intake-threshold") > 0){
-      uint8_t id = 4;
-      uint8_t otherId = 1;
-      pinUpperThresholdID[id] = atoi(data);
-      
-      if(pinUpperThresholdID[id] <= pinUpperThresholdID[otherId]){
-        pinUpperThresholdID[otherId] = pinUpperThresholdID[id] - 2;
-        char feed[] = "/f/temp-heater-threshold";
-        sendData(feed, pinUpperThresholdID[otherId]);
+    // Only update if override not on
+    if(pinOverrideID[id] != 1 && pinOverrideID[otherId] != 1){
+      if(temp < pinUpperThresholdID[otherId]){
+        pinStateID[otherId] = 1;
+        control_Pin(pinStateID[otherId], &pinPwmID[otherId], otherId);
+        pinStateID[id] = 0;
+        control_Pin(pinStateID[id], &pinPwmID[id], id);
+      }
+      else if(temp > pinUpperThresholdID[id]){
+        pinStateID[id] = 1;
+        control_Pin(pinStateID[id], &pinPwmID[id], id);
+        pinStateID[otherId] = 0;
+        control_Pin(pinStateID[otherId], &pinPwmID[otherId], otherId);
+      }
+      else{
+        pinStateID[id] = 0;
+        control_Pin(pinStateID[id], &pinPwmID[id], id);
+        pinStateID[otherId] = 0;
+        control_Pin(pinStateID[otherId], &pinPwmID[otherId], otherId);
       }
     }
+  }  
 
   /*
    * Temperature processing END
@@ -194,7 +255,7 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
       else{
         pinStateID[id] = 0;
       }
-        control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+        control_Pin(pinStateID[id], &pinPwmID[id], id);
     }
   }
   
@@ -220,7 +281,7 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
       if (pinOverrideID[id] != 1){
         pirAck = 1;
         pinStateID[id] = 1;
-        control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+        control_Pin(pinStateID[id], &pinPwmID[id], id);
       }
     }
 
@@ -235,7 +296,7 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
     if(strcmp(data, "1") == 0){
       uint8_t id = 6;
       pinStateID[6] = 0;
-      control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+      control_Pin(pinStateID[id], &pinPwmID[id], id);
     }
   }
 
@@ -269,12 +330,19 @@ void reconnect() {
       client.subscribe("/f/light-threshold");
       client.subscribe("/f/light-override");
       client.subscribe("/f/light-pwm");
+      
       client.subscribe("/f/pir-level");
       client.subscribe("/f/pir-override");
       client.subscribe("/f/pir-ack");
       client.subscribe("/f/pir-pwm");
+      
+      client.subscribe("/f/temp-level");
       client.subscribe("/f/temp-heater-threshold");
       client.subscribe("/f/temp-intake-threshold");
+      client.subscribe("/f/temp-heater-override");
+      client.subscribe("/f/temp-intake-override");
+      client.subscribe("/f/temp-intake-pwm");
+
       
       // Perform setup tasks
       
@@ -295,8 +363,9 @@ void reconnect() {
 }
 
 // Function to control whether pin turns on or off
-void control_Pin(uint8_t state, uint8_t *currentPwm, uint8_t pin){
+void control_Pin(uint8_t state, uint8_t *currentPwm, uint8_t id){
 
+   
     uint8_t pwm;
     // Use state to acertain whether or not to turn pin on (with PWM) or off
     if(state == 0){
@@ -305,9 +374,10 @@ void control_Pin(uint8_t state, uint8_t *currentPwm, uint8_t pin){
     else{
       pwm = *currentPwm;
     }
-
+    uint8_t pin = pinID[id];
+    
     // Physically switch pin
-    switch(pin){
+    switch(id){
       case 0:
       case 1:
       case 2:
@@ -397,11 +467,11 @@ void override_Pin(uint8_t id){
 
     // PIR override prevents output, everything else forces output
     if (id == 6){
-      control_Pin(0, &pinPwmID[id], pinID[id]);
+      control_Pin(0, &pinPwmID[id], id);
     }
     else{
       pinStateID[id] = 1;
-      control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+      control_Pin(pinStateID[id], &pinPwmID[id], id);
     }
   }
   else{
@@ -411,7 +481,7 @@ void override_Pin(uint8_t id){
     Serial.println(outputIdentifier[id]);
     // Set alarm back off if override pressed while buzzer occuring
     if (id == 6){
-      control_Pin(pinStateID[id], &pinPwmID[id], pinID[id]);
+      control_Pin(pinStateID[id], &pinPwmID[id], id);
     }
   }
 }
