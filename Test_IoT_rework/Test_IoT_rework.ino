@@ -26,7 +26,6 @@ PubSubClient client(ethernetClient);
 
 
 struct OperationPin {
-  /*!ADD IDENTIFIER?!*/
   const uint8_t id;
   const uint8_t pin;
   uint8_t state;
@@ -44,7 +43,7 @@ struct OperationPin Steamer   = {3,   7,    0,    0,    0,    20,   "/f/humidity
 struct OperationPin Exhaust   = {4,   9,    0,    150,  0,    80,   "/f/humidity-exhaust-"};
 struct OperationPin Intake    = {5,   5,    0,    150,  0,    25,   "/f/temp-intake-"};
 struct OperationPin Lighting  = {6,   3,    0,    255,  0,    30,   "/f/light-"};
-struct OperationPin Buzzer    = {7,   6,    0,    5,    0,    0,    "/f/pir-"};
+struct OperationPin Buzzer    = {7,   6,    0,    2,    0,    0,    "/f/pir-"};
 struct OperationPin Empty     = {0,   0,    0,    0,    0,    0,    ""};
 
 // Global Scope Variables
@@ -93,6 +92,7 @@ void setup() {
   Serial.print(F("MQTT client is at: "));
   Serial.println(Ethernet.localIP());
 
+  //Join I2C as slave addr 2
   Wire.begin(2);
   Wire.onReceive(receiveEvent);
 }
@@ -133,7 +133,15 @@ void loop() {
         update_Feed_Resub(&Lighting);
         break;
       case 7:
-        override_Pin(&Buzzer);
+        if(Buzzer.overrider == 0){
+          Buzzer.overrider = 1;
+          Buzzer.state = 0;
+          control_Pin(&Buzzer);
+        }
+        else{
+          Buzzer.overrider = 0;
+        }
+        pirAck = 0;
         update_Feed_Resub(&Buzzer);
         break;
     }
@@ -172,6 +180,8 @@ void reconnect() {
       subscribe_Topics(&Intake);
       subscribe_Topics(&Lighting);
       subscribe_Topics(&Buzzer);
+      client.subscribe("/f/pir-ack");
+      
       
     }
     // Attempt Reconnect
@@ -188,8 +198,6 @@ void reconnect() {
 }
 
 void call_Back(char* topic, byte* payload, unsigned int messLength){
-
-  
  
   // Format received data and topic and print to serial
   String t = String(topic);
@@ -451,27 +459,52 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
 
   /*
    * PIR/Buzzer processing START
+   * Different control used here in comparrison to everything else as requires reverse logic
    */
-
+  
   if (t.indexOf("pir") > 0){
     if (t.indexOf("pir-override") > 0){
-      
+      if(Buzzer.overrider == 0){
+        Buzzer.overrider = 1;
+        Buzzer.state = 0;
+        control_Pin(&Buzzer);
+      }
+      else{
+        Buzzer.overrider = 0;
+      }
     }
   
     if (t.indexOf("pir-level") > 0){
-      
+      if(Buzzer.overrider != 1){
+        if(strcmp(data, "1") == 0 && pirAck == 0){
+          // Latch pir ack so that alarm
+          pirAck = 1;
+          Buzzer.state = 1;
+          control_Pin(&Buzzer);
+        }
+        else{
+          // Alarm can't re-occur until acknowledge button pressed
+          pirAck = 0;
+        }
+      }
     }
-  
+
+    // Turn buzzer off
     if (t.indexOf("pir-ack") > 0){
-      
+      if(strcmp(data, "1") == 0){
+        Buzzer.state = 0;
+        control_Pin(&Buzzer);
+      }
     }
   
     if (t.indexOf("pir-pwm") > 0){
-      
+      uint8_t pwm = atoi(data);
+      Buzzer.pwm = pwm;
+      update_Pwm(&Buzzer, pwm);
     }  
   }
   
-  /*
+  /* 
    * PIR/Buzzer processing END
    */
   
