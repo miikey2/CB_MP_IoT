@@ -40,8 +40,8 @@ struct OperationPin {
 // Global Scope Structs        
 struct OperationPin Heater    = {1,   8,    0,    0,    0,    20,   "/f/temp-heater-"};
 struct OperationPin Solenoid  = {2,   4,    0,    0,    0,    80,   "/f/moisture-"};
-struct OperationPin Steamer   = {3,   0,    0,    0,    0,    0,    "/f/humidity-steamer-"};
-struct OperationPin Exhaust   = {4,   0,    0,    0,    0,    0,    "/f/humidity-exhaust-"};
+struct OperationPin Steamer   = {3,   7,    0,    0,    0,    20,   "/f/humidity-steamer-"};
+struct OperationPin Exhaust   = {4,   9,    0,    150,  0,    80,   "/f/humidity-exhaust-"};
 struct OperationPin Intake    = {5,   5,    0,    150,  0,    25,   "/f/temp-intake-"};
 struct OperationPin Lighting  = {6,   3,    0,    255,  0,    30,   "/f/light-"};
 struct OperationPin Buzzer    = {7,   6,    0,    5,    0,    0,    "/f/pir-"};
@@ -49,13 +49,7 @@ struct OperationPin Empty     = {0,   0,    0,    0,    0,    0,    ""};
 
 // Global Scope Variables
 uint8_t pirAck = 0;
-unsigned long ts = millis();
-uint8_t lastButtonState = 0;
-uint8_t currentButtonState = 0;
-long lastDebounceTime = 0;
-const uint8_t debounceDelay = 50;
-uint8_t receivedButton = 0;
-
+int receivedButton = 0;
   
 void setup() {
   // Init Serial for debugging and general client side messages
@@ -81,6 +75,9 @@ void setup() {
   pinMode(Intake.pin, OUTPUT);
   pinMode(Lighting.pin, OUTPUT);
   pinMode(Buzzer.pin, OUTPUT);
+  pinMode(Exhaust.pin, OUTPUT);
+  pinMode(Steamer.pin, OUTPUT);
+  pinMode(Solenoid.pin, OUTPUT);
   pinMode(A0, INPUT);
 
   // Connect to network
@@ -108,28 +105,36 @@ void loop() {
   }
 
   client.loop();
+  
   if (receivedButton != 0){
     switch(receivedButton){
       case 1:
         override_Pin(&Heater);
+        update_Feed_Resub(&Heater);
         break;
       case 2:
         override_Pin(&Solenoid);
+        update_Feed_Resub(&Solenoid);
         break;
       case 3:
         override_Pin(&Steamer);
+        update_Feed_Resub(&Steamer);
         break;
       case 4:
         override_Pin(&Exhaust);
+        update_Feed_Resub(&Exhaust);
         break;
       case 5:
         override_Pin(&Intake);
+        update_Feed_Resub(&Intake);
         break;
       case 6:
         override_Pin(&Lighting);
+        update_Feed_Resub(&Lighting);
         break;
       case 7:
         override_Pin(&Buzzer);
+        update_Feed_Resub(&Buzzer);
         break;
     }
     receivedButton = 0;
@@ -145,34 +150,29 @@ void reconnect() {
     if (client.connect("CB_MP_Publisher", "cbraines", "Tp:5tF'<5dc_k@;<")) {
       Serial.println(F("... connected"));
 
+      
+      // Pre-Publish startup values done before subs to prevent improper activation of systems
+      
       client.publish("/f/message-log", "Subscriber connected");
 
-      // Subscribe to relevant feeds
-      client.subscribe("/f/light-level");
-      client.subscribe("/f/light-threshold");
-      client.subscribe("/f/light-override");
-      client.subscribe("/f/light-pwm");
-      
-      client.subscribe("/f/pir-level");
-      client.subscribe("/f/pir-override");
-      client.subscribe("/f/pir-ack");
-      client.subscribe("/f/pir-pwm");
-      
-      client.subscribe("/f/temp-level");
-      client.subscribe("/f/temp-heater-threshold");
-      client.subscribe("/f/temp-intake-threshold");
-      client.subscribe("/f/temp-heater-override");
-      client.subscribe("/f/temp-intake-override");
-      client.subscribe("/f/temp-intake-pwm");
+      // Pre-publish all values
+      pre_Publish_Feeds(&Heater);
+      pre_Publish_Feeds(&Solenoid);
+      pre_Publish_Feeds(&Steamer);
+      pre_Publish_Feeds(&Exhaust);
+      pre_Publish_Feeds(&Intake);
+      pre_Publish_Feeds(&Lighting);
+      pre_Publish_Feeds(&Buzzer);
 
-      client.subscribe("/f/moisture-level");
-      client.subscribe("/f/moisture-threshold");
-      client.subscribe("/f/moisture-override");
+      // Subscribe to topics
+      subscribe_Topics(&Heater);
+      subscribe_Topics(&Solenoid);
+      subscribe_Topics(&Steamer);
+      subscribe_Topics(&Exhaust);
+      subscribe_Topics(&Intake);
+      subscribe_Topics(&Lighting);
+      subscribe_Topics(&Buzzer);
       
-      // Perform setup tasks
-      
-      /*!PRE PUBLISH ANYTHING NEEDED HERE!*/
-      // Publish any startup values
     }
     // Attempt Reconnect
     else {
@@ -367,6 +367,87 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
    * Moisture processing END
    */
 
+  /*
+   * Humidity processing START
+   */
+
+  if(t.indexOf("humidity") > 0){
+
+    if (t.indexOf("humidity-steamer-threshold") > 0){
+      Steamer.threshold = atoi(data);
+
+      // Ensure Steamer < Exhaust
+      if(Steamer.threshold >= Exhaust.threshold){
+        Exhaust.threshold = Steamer.threshold + 2;
+
+        char feed[] = "/f/humidity-exhaust-threshold";
+        send_Data(feed, Exhaust.threshold);
+      }
+    }
+
+    if (t.indexOf("humidity-exhaust-threshold") > 0){
+     Exhaust.threshold = atoi(data);
+
+      if(Exhaust.threshold <= Steamer.threshold){
+        Steamer.threshold = Exhaust.threshold - 2;
+
+        char feed[] = "/f/humidity-steamer-threshold";
+        send_Data(feed, Steamer.threshold);
+      }
+    }
+
+    if (t.indexOf("humidity-steamer-override") > 0){
+      if(Exhaust.overrider != 1 || strcmp(data, "OFF") != 0){
+        override_Pin(&Steamer);
+      }
+    }
+
+    if (t.indexOf("humidity-exhaust-override") > 0){
+      if(Steamer.overrider != 1 || strcmp(data, "OFF") != 0){
+        override_Pin(&Exhaust);
+      }
+    }
+
+    if (t.indexOf("humidity-exhaust-pwm") > 0){
+      uint8_t pwm = atoi(data);
+      update_Pwm(&Exhaust, pwm);
+    }
+
+    if (t.indexOf("humidity-level") > 0){
+      uint8_t humidity = atoi(data);
+
+      if(Steamer.overrider != 1 && Exhaust.overrider != 1){
+        if(humidity <= Steamer.threshold){
+          Steamer.state = 1;
+          control_Pin(&Steamer);
+          Exhaust.state = 0;
+          control_Pin(&Exhaust);
+        }
+        else if(humidity >= Exhaust.threshold){
+          Exhaust.state = 1;
+          control_Pin(&Exhaust);
+          Steamer.state = 0;
+          control_Pin(&Steamer);
+        }
+        else{
+          Exhaust.state = 0;
+          control_Pin(&Exhaust);
+          Steamer.state = 0;
+          control_Pin(&Steamer);
+        }
+      }
+
+      
+    }
+    
+    
+  }
+
+
+   /*
+    * Humidity processing END
+    */
+
 
   /*
    * PIR/Buzzer processing START
@@ -396,6 +477,7 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   
 }
 
+// Physically turn pin on/off
 void control_Pin(struct OperationPin *Holder){
 
   uint8_t pwm;
@@ -407,19 +489,20 @@ void control_Pin(struct OperationPin *Holder){
   }
 
   switch(Holder->id){
-    case 0:
     case 1:
-      case 2:
+    case 2:
+    case 3:
         digitalWrite(Holder->pin, Holder->state);
         break;
-      case 3:
-      case 4:
-      case 5:
-      case 6:
-        analogWrite(Holder->pin, pwm);
-        break;
+    case 4:
+    case 5:
+    case 6:
+    case 7:
+      analogWrite(Holder->pin, pwm);
+      break;
   }
 }
+
 
 void update_Pwm(struct OperationPin *Holder, uint8_t pwm){
   // If pin is on, update the live and stored PWM, else just stored
@@ -432,7 +515,8 @@ void update_Pwm(struct OperationPin *Holder, uint8_t pwm){
   }
 }
 
-/*!Need to fix so that Interface on MQTT updates for manual button presses!*/
+
+// Override pin to prevent automatic routines
 void override_Pin(struct OperationPin *Holder){
   
   //If symlink present then update main and disable/turn off sym
@@ -456,6 +540,7 @@ void override_Pin(struct OperationPin *Holder){
   }
 }
 
+// Override controller for symbolic structs
 void update_Symbolic_Override(struct OperationPin *Holder){
   // Set state as 0 & ensure overrider is 0 to prevent both overrides at once
   Holder->state = 0;
@@ -468,11 +553,16 @@ void update_Symbolic_Override(struct OperationPin *Holder){
   send_Data(passFeed, 0);
 }
 
+// Publish value to client
 void send_Data(char *feed, int payload){
-
   // Send overrider feed back
   if(strstr(feed, "override") != NULL){
-    client.publish(feed, "OFF");
+    if(payload == 0){
+      client.publish(feed, "OFF");
+    }
+    else{
+      client.publish(feed, "ON");
+    }
   }
   // Send standard payload
   else{
@@ -487,7 +577,73 @@ void send_Data(char *feed, int payload){
    
 }
 
+
+// I2C handler
 void receiveEvent(int bytes){
   receivedButton = Wire.read();
 }
+
+// prepub to feeds saving lines/mem
+void pre_Publish_Feeds(struct OperationPin *Holder){
+  char feed[30] = {};
+  
+  // Pub Threshold
+  strcpy(feed, Holder->feed);
+  strcat(feed, "threshold");
+  send_Data(feed, Holder->threshold);
+
+  // Pub PWM
+  strcpy(feed, Holder->feed);
+  strcat(feed, "pwm");
+  send_Data(feed, Holder->pwm);
+
+  // Pub override status (used if system restart while client already listening)
+  strcpy(feed, Holder->feed);
+  strcat(feed, "override");
+  send_Data(feed, Holder->overrider);
+}
+
+// Sub to feeds saving lines/mem
+void subscribe_Topics(struct OperationPin *Holder){
+  char feed[30] = {};
+  const char delim[2] = "-";
+  char *croppedFeed;
+  
+  // Sub to level feed (Crop to - and then append -level to deal with systems with 2 components);
+  strcpy(feed, Holder->feed);
+  croppedFeed = strtok(feed, delim);
+  strcat(croppedFeed, "-level");
+  client.subscribe(croppedFeed);
+
+  // Sub to threshold
+  strcpy(feed, Holder->feed);
+  strcat(feed, "threshold");
+  client.subscribe(feed);
+
+  // Sub to override
+  strcpy(feed, Holder->feed);
+  strcat(feed, "override");
+  client.subscribe(feed);
+
+  // IDs greater than 3 are pwm pins
+  if(Holder->id > 3){
+    // Sub to pwm
+    strcpy(feed, Holder->feed);
+    strcat(feed, "pwm");
+    client.subscribe(feed);
+  }
+  
+}
+
+// Updates Feed without incurring a received message
+void update_Feed_Resub(struct OperationPin *Holder){
+  char passFeed[30] = {};
+  strcpy(passFeed, Holder->feed);
+  strcat(passFeed, "override");
+  client.unsubscribe(passFeed);
+  send_Data(passFeed, Holder->overrider);
+  client.subscribe(passFeed);
+}
+
+
 
