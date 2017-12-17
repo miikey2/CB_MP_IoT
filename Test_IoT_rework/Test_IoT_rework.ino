@@ -23,7 +23,9 @@ PubSubClient client(ethernetClient);
  * 
  * 
  */
-
+const char* tops[] = {"temp-", "light-", "moisture-", "humidity-", "pir-"};
+const char* mids[] = {"heater-", "intake-", "steamer-", "exhaust-"};
+const char* bots[] = {"level", "pwm", "threshold", "override", "ack"};
 
 struct OperationPin {
   const uint8_t id;
@@ -40,7 +42,7 @@ struct OperationPin {
 struct OperationPin Heater    = {1,   8,    0,    0,    0,    20,   "/f/temp-heater-"};
 struct OperationPin Solenoid  = {2,   4,    0,    0,    0,    80,   "/f/moisture-"};
 struct OperationPin Steamer   = {3,   7,    0,    0,    0,    20,   "/f/humidity-steamer-"};
-struct OperationPin Exhaust   = {4,   9,    0,    150,  0,    80,   "/f/humidity-exhaust-"};
+struct OperationPin Exhaust   = {4,   9,    0,    150,  0,    40,   "/f/humidity-exhaust-"};
 struct OperationPin Intake    = {5,   5,    0,    150,  0,    25,   "/f/temp-intake-"};
 struct OperationPin Lighting  = {6,   3,    0,    255,  0,    30,   "/f/light-"};
 struct OperationPin Buzzer    = {7,   6,    0,    2,    0,    0,    "/f/pir-"};
@@ -181,7 +183,8 @@ void reconnect() {
       subscribe_Topics(&Lighting);
       subscribe_Topics(&Buzzer);
       client.subscribe("/f/pir-ack");
-      
+
+      delay(2000);
       
     }
     // Attempt Reconnect
@@ -206,11 +209,14 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
     data[i] = payload[i]; 
   }
   data[messLength] = '\0';
+  
   Serial.print(F("message arrived ["));
   Serial.print(topic);
   Serial.print(F("] "));
   Serial.println(data);
-
+  
+  char searchBuffer[27];
+  
   //Sub-sorting running to prevent needless checks
 
   /*
@@ -218,59 +224,15 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   * Heater and intake are symboliclly linked so must always be
   * Heater threshold < Intake Threshold 
   */
+  strcpy(searchBuffer, tops[0]);
   
-  if(t.indexOf("temp") > 0){
-    /*!NEED TO FULLY TEST ALL IS WORKING PROPERLY!*/
-    // Store new heating threshold
-    if (t.indexOf("temp-heater-threshold") > 0){
-      Heater.threshold = atoi(data);
-  
-      // Ensure Heating thresh < Intake
-      if(Heater.threshold >= Intake.threshold){
-        Intake.threshold = Heater.threshold + 2;
-        
-        // Update client feed
-        char feed[] = "/f/temp-intake-threshold";
-        send_Data(feed, Intake.threshold);
-      }
-    }
-  
-    // Store new intake threshold
-    if (t.indexOf("temp-intake-threshold") > 0){
-      Intake.threshold = atoi(data);
-  
-      // Ensure Heating thresh > Intake
-      if(Intake.threshold <= Heater.threshold){
-        Heater.threshold = Intake.threshold - 2;
-        
-        // Update client feed
-        char feed[] = "/f/temp-heater-threshold";
-        send_Data(feed, Heater.threshold);
-      }
-    }
-  
-    // Updates current Intake Fan speed
-    if (t.indexOf("temp-intake-pwm") > 0){
-      uint8_t pwm = atoi(data);
-      update_Pwm(&Intake, pwm);
-    }
-  
-    // Applies/removes override for intake
-    if (t.indexOf("temp-intake-override") > 0){
-      if(Heater.overrider != 1 || strcmp(data, "OFF") != 0){
-        override_Pin(&Intake);
-      }
-    }
-  
-    // Applies/removes override for heater
-    if (t.indexOf("temp-heater-override") > 0){
-      if(Intake.overrider != 1 || strcmp(data, "OFF") != 0){
-        override_Pin(&Heater);
-      }
-    }
-  
+  // Check if temp-
+  if(t.indexOf(searchBuffer) > 0){
+
+    // Check if temp-level
+    strcat(searchBuffer, bots[0]);
     // Auto switches between Heater and intake as long as no override on
-    if (t.indexOf("temp-level") > 0){
+    if (t.indexOf(searchBuffer) > 0){
       uint8_t temp = atoi(data);
   
       if(Heater.overrider != 1 && Intake.overrider != 1){
@@ -294,6 +256,75 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
         }
       }
     }
+
+    // Search if temp-intake-pwm
+    strcpy(searchBuffer, tops[0]);
+    strcat(searchBuffer, mids[1]);
+    strcat(searchBuffer, bots[1]);
+    // Updates current Intake Fan speed
+    if (t.indexOf(searchBuffer) > 0){
+      uint8_t pwm = atoi(data);
+      update_Pwm(&Intake, pwm);
+    }
+
+    // Search if temp-heater-threshold
+    strcpy(searchBuffer, tops[0]);
+    strcat(searchBuffer, mids[0]);
+    strcat(searchBuffer, bots[2]);
+    // Store new heating threshold
+    if (t.indexOf(searchBuffer) > 0){
+      Heater.threshold = atoi(data);
+  
+      // Ensure Heating thresh < Intake
+      if(Heater.threshold >= Intake.threshold){
+        Intake.threshold = Heater.threshold + 2;
+        
+        // Update client feed
+        char feed[] = "/f/temp-intake-threshold";
+        send_Data(feed, Intake.threshold);
+      }
+    }
+
+    // Search if temp-intake-threshold
+    strcpy(searchBuffer, tops[0]);
+    strcat(searchBuffer, mids[1]);
+    strcat(searchBuffer, bots[2]);
+    // Store new intake threshold
+    if (t.indexOf(searchBuffer) > 0){
+      Intake.threshold = atoi(data);
+  
+      // Ensure Heating thresh > Intake
+      if(Intake.threshold <= Heater.threshold){
+        Heater.threshold = Intake.threshold - 2;
+        
+        // Update client feed
+        char feed[] = "/f/temp-heater-threshold";
+        send_Data(feed, Heater.threshold);
+      }
+    }
+
+    // Search if temp-heater-override
+    strcpy(searchBuffer, tops[0]);
+    strcat(searchBuffer, mids[0]);
+    strcat(searchBuffer, bots[3]);
+    // Applies/removes override for heater
+    if (t.indexOf(searchBuffer) > 0){
+      if(Intake.overrider != 1 || strcmp(data, "OFF") != 0){
+        override_Pin(&Heater);
+      }
+    }
+  
+    // Search if temp-intake-override
+    strcpy(searchBuffer, tops[0]);
+    strcat(searchBuffer, mids[1]);
+    strcat(searchBuffer, bots[3]);
+    // Applies/removes override for intake
+    if (t.indexOf(searchBuffer) > 0){
+      if(Heater.overrider != 1 || strcmp(data, "OFF") != 0){
+        override_Pin(&Intake);
+      }
+    }
+
   }
   
   /*
@@ -304,26 +335,15 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   /*
    * Light processing START
    */
-   
-  if (t.indexOf("light") > 0){
-    // Adjust PWM
-    if (t.indexOf("light-pwm") > 0){
-      uint8_t pwm = atoi(data);
-      update_Pwm(&Lighting, pwm);
-    }
 
-    // Set Lighting Threshold
-    if (t.indexOf("light-threshold") > 0){
-      Lighting.threshold = atoi(data);
-    }
+  // Search if light- 
+  strcpy(searchBuffer, tops[1]);
+  if (t.indexOf(searchBuffer) > 0){
 
-    // Override Lighting Auto
-    if (t.indexOf("light-override") > 0){
-      override_Pin(&Lighting);
-    }
-
+    // Search if light-level
+    strcat(searchBuffer, bots[0]);
     // Auto control lighting
-    if (t.indexOf("light-level") > 0){
+    if (t.indexOf(searchBuffer) > 0){
       uint8_t light = atoi(data);
       if(Lighting.overrider != 1){
         if(light < Lighting.threshold){
@@ -335,6 +355,34 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
         control_Pin(&Lighting);
       }
     }
+
+    // Search if light-pwm
+    strcpy(searchBuffer, tops[1]);
+    strcat(searchBuffer, bots[1]);  
+    // Adjust PWM
+    if (t.indexOf(searchBuffer) > 0){
+      uint8_t pwm = atoi(data);
+      update_Pwm(&Lighting, pwm);
+    }
+
+
+    // Search if light-threshold
+    strcpy(searchBuffer, tops[1]);
+    strcat(searchBuffer, bots[2]);
+    // Set Lighting Threshold
+    if (t.indexOf(searchBuffer) > 0){
+      Lighting.threshold = atoi(data);
+    }
+
+    // Search if light-override
+    strcpy(searchBuffer, tops[1]);
+    strcat(searchBuffer, bots[3]);
+    // Override Lighting Auto
+    if (t.indexOf("light-override") > 0){
+      override_Pin(&Lighting);
+    }
+
+    
   }
   
   /*
@@ -345,18 +393,14 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   /*
    * Moisture processing START
    */
+   
+  // Search if moisture-
+  strcpy(searchBuffer, tops[2]);
+  if(t.indexOf(searchBuffer) > 0){
 
-  if(t.indexOf("moisture") > 0){
-
-    if(t.indexOf("moisture-threshold") > 0){
-      Solenoid.threshold = atoi(data);
-    }
-
-    if(t.indexOf("moisture-override") > 0){
-      override_Pin(&Solenoid);
-    }
-
-    if(t.indexOf("moisture-level") > 0){
+    // Search if moisture-level
+    strcat(searchBuffer, bots[0]);
+    if(t.indexOf(searchBuffer) > 0){
       uint8_t moisture = atoi(data);
       if(Solenoid.overrider != 1){
         if(moisture <= Solenoid.threshold){
@@ -369,6 +413,21 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
       }
     }
 
+    // Search if moisture-threshold
+    strcpy(searchBuffer, tops[2]);
+    strcat(searchBuffer, bots[2]);
+    if(t.indexOf(searchBuffer) > 0){
+      Solenoid.threshold = atoi(data);
+    }
+
+    // Search if moisture-override
+    strcpy(searchBuffer, tops[2]);
+    strcat(searchBuffer, bots[3]);
+    if(t.indexOf(searchBuffer) > 0){
+      override_Pin(&Solenoid);
+    }
+
+
   }
 
   /*
@@ -378,50 +437,14 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
   /*
    * Humidity processing START
    */
+   
+  // Search if Humidity
+  strcpy(searchBuffer, tops[3]);
+  if(t.indexOf(searchBuffer) > 0){
 
-  if(t.indexOf("humidity") > 0){
-
-    if (t.indexOf("humidity-steamer-threshold") > 0){
-      Steamer.threshold = atoi(data);
-
-      // Ensure Steamer < Exhaust
-      if(Steamer.threshold >= Exhaust.threshold){
-        Exhaust.threshold = Steamer.threshold + 2;
-
-        char feed[] = "/f/humidity-exhaust-threshold";
-        send_Data(feed, Exhaust.threshold);
-      }
-    }
-
-    if (t.indexOf("humidity-exhaust-threshold") > 0){
-     Exhaust.threshold = atoi(data);
-
-      if(Exhaust.threshold <= Steamer.threshold){
-        Steamer.threshold = Exhaust.threshold - 2;
-
-        char feed[] = "/f/humidity-steamer-threshold";
-        send_Data(feed, Steamer.threshold);
-      }
-    }
-
-    if (t.indexOf("humidity-steamer-override") > 0){
-      if(Exhaust.overrider != 1 || strcmp(data, "OFF") != 0){
-        override_Pin(&Steamer);
-      }
-    }
-
-    if (t.indexOf("humidity-exhaust-override") > 0){
-      if(Steamer.overrider != 1 || strcmp(data, "OFF") != 0){
-        override_Pin(&Exhaust);
-      }
-    }
-
-    if (t.indexOf("humidity-exhaust-pwm") > 0){
-      uint8_t pwm = atoi(data);
-      update_Pwm(&Exhaust, pwm);
-    }
-
-    if (t.indexOf("humidity-level") > 0){
+    //Search if humidity-level
+    strcat(searchBuffer,bots[0]);
+    if (t.indexOf(searchBuffer) > 0){
       uint8_t humidity = atoi(data);
 
       if(Steamer.overrider != 1 && Exhaust.overrider != 1){
@@ -444,10 +467,72 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
           control_Pin(&Steamer);
         }
       }
-
-      
     }
-    
+
+    // Search if humidity-exhaust-pwm
+    strcpy(searchBuffer, tops[3]);
+    strcat(searchBuffer, mids[3]);
+    strcat(searchBuffer, bots[1]);
+    if (t.indexOf(searchBuffer) > 0){
+      uint8_t pwm = atoi(data);
+      update_Pwm(&Exhaust, pwm);
+    }
+
+
+    // Search if humidity-steamer-threshold
+    strcpy(searchBuffer, tops[3]);
+    strcat(searchBuffer, mids[2]);
+    strcat(searchBuffer, bots[2]);
+    if (t.indexOf(searchBuffer) > 0){
+      Steamer.threshold = atoi(data);
+
+      // Ensure Steamer < Exhaust
+      if(Steamer.threshold >= Exhaust.threshold){
+        Exhaust.threshold = Steamer.threshold + 2;
+      
+        char feed[30] = "/f/humidity-exhaust-threshold";
+        send_Data(feed, Exhaust.threshold);
+
+      }
+    }
+
+    // Search if humidity-exhaust-threshold
+    strcpy(searchBuffer, tops[3]);
+    strcat(searchBuffer, mids[3]);
+    strcat(searchBuffer, bots[2]);
+    if (t.indexOf(searchBuffer) > 0){
+      Exhaust.threshold = atoi(data);
+
+      // Ensure Exhaust > Steamer
+      if(Exhaust.threshold <= Steamer.threshold){
+        Steamer.threshold = Exhaust.threshold - 2;
+
+        char feed[30] = "/f/humidity-steamer-threshold";
+        send_Data(feed, Steamer.threshold);
+
+      }
+    }
+
+
+    // Search if humidity-steamer-override
+    strcpy(searchBuffer, tops[3]);
+    strcat(searchBuffer, mids[2]);
+    strcat(searchBuffer, bots[3]);
+    if (t.indexOf(searchBuffer) > 0){
+      if(Exhaust.overrider != 1 || strcmp(data, "OFF") != 0){
+        override_Pin(&Steamer);
+      }
+    }
+
+    // Search if humidity-exhaust-override
+    strcpy(searchBuffer, tops[3]);
+    strcat(searchBuffer, mids[3]);
+    strcat(searchBuffer, bots[3]);
+    if (t.indexOf(searchBuffer) > 0){
+      if(Steamer.overrider != 1 || strcmp(data, "OFF") != 0){
+        override_Pin(&Exhaust);
+      }
+    }
     
   }
 
@@ -461,20 +546,14 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
    * PIR/Buzzer processing START
    * Different control used here in comparrison to everything else as requires reverse logic
    */
-  
-  if (t.indexOf("pir") > 0){
-    if (t.indexOf("pir-override") > 0){
-      if(Buzzer.overrider == 0){
-        Buzzer.overrider = 1;
-        Buzzer.state = 0;
-        control_Pin(&Buzzer);
-      }
-      else{
-        Buzzer.overrider = 0;
-      }
-    }
-  
-    if (t.indexOf("pir-level") > 0){
+
+  // Search if pir-
+  strcpy(searchBuffer, tops[4]);
+  if (t.indexOf(searchBuffer) > 0){
+
+    // Search if pir-level
+    strcat(searchBuffer, bots[0]);
+    if (t.indexOf(searchBuffer) > 0){
       if(Buzzer.overrider != 1){
         if(strcmp(data, "1") == 0 && pirAck == 0){
           // Latch pir ack so that alarm
@@ -489,19 +568,43 @@ void call_Back(char* topic, byte* payload, unsigned int messLength){
       }
     }
 
+    // Search if pir-pwm
+    strcpy(searchBuffer, tops[4]);
+    strcat(searchBuffer, bots[1]);
+    if (t.indexOf(searchBuffer) > 0){
+      uint8_t pwm = atoi(data);
+      Buzzer.pwm = pwm;
+      update_Pwm(&Buzzer, pwm);
+    }  
+
+
+    // Search if pir-override
+    strcpy(searchBuffer, tops[4]);
+    strcat(searchBuffer, bots[3]);
+    if (t.indexOf(searchBuffer) > 0){
+      if(Buzzer.overrider == 0){
+        Buzzer.overrider = 1;
+        Buzzer.state = 0;
+        control_Pin(&Buzzer);
+      }
+      else{
+        Buzzer.overrider = 0;
+      }
+    }
+  
+    
+    // Search if pir-ack
+    strcpy(searchBuffer, tops[4]);
+    strcat(searchBuffer, bots[4]);
     // Turn buzzer off
-    if (t.indexOf("pir-ack") > 0){
+    if (t.indexOf(searchBuffer) > 0){
       if(strcmp(data, "1") == 0){
         Buzzer.state = 0;
         control_Pin(&Buzzer);
       }
     }
   
-    if (t.indexOf("pir-pwm") > 0){
-      uint8_t pwm = atoi(data);
-      Buzzer.pwm = pwm;
-      update_Pwm(&Buzzer, pwm);
-    }  
+    
   }
   
   /* 
@@ -603,7 +706,6 @@ void send_Data(char *feed, int payload){
     String payloadStr = String(payload, DEC);
     char payloadBuffer[8];
     payloadStr.toCharArray(payloadBuffer, 9);
-  
     // Publish value
     client.publish(feed, payloadBuffer);
   }
