@@ -1,9 +1,17 @@
+#include <LiquidCrystal.h>
+#include <PubSubClient.h>
 #include <SPI.h>
 #include <Ethernet2.h>
 #include <PubSubClient.h>
 
+
+// initialize the library by associating any needed LCD interface pin
+// with the arduino pin number it is connected to.
+const int rs = 10, en = 9 , d4 = 5, d5 = 4, d6 = 3, d7 = 7;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
 // Needs changing for any different boards code is uploaded to.
-byte mac[] = {0x90, 0xA2, 0xDA, 0x11, 0x3B, 0xC6};
+byte mac[] = {0x90, 0xA2, 0xDA, 0x11, 0x3C, 0x9A};
 
 // Set fallback network config in case of no DHCP server
 IPAddress ip(192, 168, 0, 11);
@@ -15,34 +23,53 @@ EthernetClient ethernetClient;
 PubSubClient client(ethernetClient);
 
 // Pin Constants defined here
-const char pirPin = 2;
+const char pirsensor = 2;
+const int lightsensor = A2;
+const int tempsensor = A3;
+const int humidsensor = A4;
+const int moisturesensor = A5;
 
 // Programme scope variables declared here
 uint8_t pirState = 0;
 unsigned int maxLevel = 0;
 unsigned int minLevel = 1023;
-unsigned long ts = millis();
+int light;
+int PIR;
+int temperature;
+int humidity;
+int moisture;
+float tempval;
+int count = 1;
+int count2 = 1;
+unsigned long ts2 = millis();
 
 
-
-void setup() {
+  void setup() {
+  // set up the LCD's number of columns and rows:
+  lcd.begin(16, 2);
+    
   // Init Serial for debugging and general client side messages
   Serial.begin(9600);
   Serial.println("Starting MQTT client on arduino ...");
-  
+
   // Set MQTT server
   client.setServer("brain.engineering", 1883);
   client.setCallback(call_Back);
 
-  /*!SET PINS HERE!*/
+  /*!SET PINS HERE!*/ 
   // Set input and outputs
-  pinMode(pirPin, INPUT);
+  pinMode(pirsensor, INPUT);
+  pinMode(lightsensor, INPUT);
+  pinMode(tempsensor, INPUT);
+  pinMode(humidsensor, INPUT);
+  pinMode(moisturesensor, INPUT);
+
 
   // Connect to network
   if (Ethernet.begin(mac) == 0){
-    // Fallback if no DHCP
-    Serial.println("Failed to configure ethernet using DHCP");
-    Ethernet.begin(mac, ip);
+  // Fallback if no DHCP
+  Serial.println("Failed to configure ethernet using DHCP");
+  Ethernet.begin(mac, ip);
   }
   
   // Delay to ensure everything set
@@ -51,26 +78,87 @@ void setup() {
   Serial.print("MQTT client is at: ");
   Serial.println(Ethernet.localIP());
   
+  
 }
 
 void loop() {
-  //Conect on first instance and then recon if any DC occurs
+  // Connect on first instance and then reconnect if any DC occurs
   if (!client.connected()){
     reconnect();
   }
-
-  /*!CHANGE TO TIER TAKING DIFFERENT DATA EVERY 0.2 Seconds?!*/
-  // Every 1.5s send data
-  if (millis() > ts + 1500){
-    ts = millis();
-    sendLight(&maxLevel, &minLevel);
+  
+  unsigned long ts = millis();
+  // Every 0.2 seconds, read different sensor values to stagger publishing
+  while (millis() < (ts + 1000)){
+  if ((count == 1) && (millis() < ts + 200)){
+    count++;
     readPIR(&pirState);
   }
-  
-  client.loop();
+  else if ((count == 2) && (millis() > ts + 200) && (millis() < ts + 400)){
+    count++;
+    sendLight(&maxLevel, &minLevel);
+  }
+  else if ((count == 3) && (millis() > ts + 400) && (millis() < ts + 600)){
+    count++;
+    sendTemp();
+  }
+  else if ((count == 4) && (millis() > ts + 600) && (millis() < ts + 800)){
+    count++;
+    sendHumidity();
+  }
+  else if ((count == 5) && (millis() > ts + 800) && (millis() < ts + 1000)){
+    sendMoisture();
+    count = 1;
+  }
+ }
+ 
 
+// Every 5 seconds, print new sensor value to LCD
+while (millis() > (ts2 + 5000)){
+  if (count2 == 1){
+    lcd.clear();
+    lcd.print("PIR state = ");
+    lcd.print(PIR, 1);
+    count2++;
+    ts2 = millis();
+  }
+  else if (count2 == 2){
+    lcd.clear();
+    lcd.print("Light = ");
+    lcd.print(light, 1);
+    lcd.print("%");
+    count2++;
+    ts2 = millis();
+  }
+  else if (count2 == 3){
+    lcd.clear();
+    lcd.print("Temp = ");
+    lcd.print(tempval, 1);
+    lcd.print((char)223);
+    lcd.print("C");
+    count2++;
+    ts2 = millis();
+  }
+  else if (count2 == 4){
+    lcd.clear();
+    lcd.print("Humidity = ");
+    lcd.print(humidity, 1);
+    lcd.print("%");
+    count2++;
+    ts2 = millis();
+  }
+  else if (count2 == 5){
+    lcd.clear();
+    lcd.print("Moisture = ");
+    lcd.print(moisture, 1);
+    lcd.print("%");
+    count2 = 1;
+    ts2 = millis();
+  }
 }
 
+  client.loop();
+}
 /*!SUBSCRIBE TO OVERRIDE FEEDS TO PREVENT DATA SENDING?!*/
 // Function to handle recieving messages from broker
 void call_Back(char* topic, byte* payload, unsigned int messLength){
@@ -110,8 +198,12 @@ void reconnect() {
       /*!ADD FEEDS!*/
       /*!NEED TO KNOW STATES OF ANY CALIBRATION FEEDS!*/
       // Subscribe to relevant feeds
-      client.subscribe("cbraines/f/light-level");     /*!DON'T NEED FURTHER DOWN THE LINES!*/
-      client.subscribe("cbraines/f/recalibrate-ldr");
+      client.subscribe("/mpearson/f/light-level"); /*!DON'T NEED FURTHER DOWN THE LINES!*/
+      client.subscribe("/mpearson/f/temp-level"); 
+      client.subscribe("/mpearson/f/humidity-level"); 
+      client.subscribe("/mpearson/f/moisture-level"); 
+      client.subscribe("/mpearson/f/pir-level"); 
+      client.subscribe("/mpearson/f/recalibrate-ldr");
 
       // Perform setup tasks
       calibrate_Ldr(&maxLevel, &minLevel);
@@ -128,7 +220,6 @@ void reconnect() {
       /*!HARD DELAY USED HERE AS NO NEED PUB OCCURS ON THIS BOARD!*/
       delay(5000);
     }
-
   }
 }
 
@@ -169,40 +260,75 @@ void calibrate_Ldr(uint16_t *maxL, uint16_t *minL){
       *minL = light;
     }
   }
-  client.publish("cbraines/f/message-log","LDR recalibrated");
+  client.publish("mpearson/f/message-log","LDR recalibrated");
 }
 
-// Function to read light and send via sendFeed fnc
+
+// Function to read light and send via sendFeed function
 void sendLight(uint16_t *maxL, uint16_t *minL){
   if (client.connected()){
-    int light = analogRead(A0);
+    light = analogRead(lightsensor);
 
     // Remap light value
     light = map(light, *minL, *maxL, 0, 100);
     // Stop value from exceeding upper and lower bounds
     light = constrain(light, 0, 100);
- 
-    char feed[] = "cbraines/f/light-level";
+    
+    char feed[] = "/mpearson/f/light-level";
     sendData(feed, light);
   }
 }
 
-// funciton for PIR that Transmits PIR state on toggle of state
+// Function for PIR that Transmits PIR state on toggle of state
 void readPIR(uint8_t *state){
-  /* PIR holds input of 1 internally for ~8s whenever detecting so no interrupt needed */
-  int pirVal;
-  pirVal = digitalRead(pirPin);
-
+  /* PIR holds input of 1 internally for ~8s whenever detecting so no interrupt needed */ 
+  PIR = digitalRead(pirsensor);
+      
   // tx broker if latch has occured
-  if (pirVal != *state){
-      char feed[] = "cbraines/f/pir-level";
-      sendData(feed, pirVal);
-      *state = pirVal;
+  if (PIR != *state){
+      char feed[] = "/mpearson/f/pir-level";
+      sendData(feed, PIR);
+      *state = PIR;
   }
-  
 }
 
-// function to handle all data sending
+// Function to read temp and send via sendFeed function
+void sendTemp(){
+  if (client.connected()){
+    
+    temperature = analogRead(tempsensor);
+
+    float voltage = ((temperature * 5.0) / 1023.0);
+    tempval = ((voltage - 0.5) * 100.0);
+
+    char feed[] = "/mpearson/f/temp-level";
+    sendData(feed, tempval);
+  }
+}
+
+// Function to read humidity and send via sendFeed function
+void sendHumidity(){
+  if (client.connected()){
+    humidity = analogRead(humidsensor);
+
+    humidity = constrain(humidity, 0, 100);
+    char feed[] = "/mpearson/f/humidity-level";
+    sendData(feed, humidity);
+  }
+}
+
+// Function to read moisture and send via sendFeed function
+void sendMoisture(){
+  if (client.connected()){
+    moisture = analogRead(moisturesensor);
+
+    moisture = constrain(moisture, 0, 100);
+    char feed[] = "/mpearson/f/moisture-level";
+    sendData(feed, moisture);
+  }
+}
+
+// Function to handle all data sending
 void sendData(char *feed, int payload){
 
   // Convert payload to character array
